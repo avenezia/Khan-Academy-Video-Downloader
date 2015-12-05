@@ -1,3 +1,5 @@
+import argparse
+import os
 import requests
 import sys
 
@@ -11,7 +13,23 @@ class KhanAcademyVideoDownloader:
         self._topicUrl = "http://www.khanacademy.org/api/v1/topic/"
         self._videoUrl = "http://www.khanacademy.org/api/v1/videos/"
 
+        self._fileExtension = "mp4"
+        self._filePath = []
+
+    def parseCommandLineArguments(self):
+        parser = argparse.ArgumentParser()
+        parser.add_argument("course_name", type=str, help="The name of the course you want to download the videos of.")
+        parser.add_argument("-e", type=str, help="The extension of the videos to be downloaded", metavar="video_extension")
+        args = parser.parse_args()
+        if args.e is not None:
+            if len(args.e) > 1:
+                self._fileExtension = args.e
+            else:
+                print "The provided extension is too short, by default using mp4."
+        return args.course_name
+
     def visitCourse(self, topic):
+        self._filePath.append(topic)
         self.visitElement(requests.get(self._topicUrl + topic).json())
 
     def visitElement(self, element):
@@ -24,34 +42,42 @@ class KhanAcademyVideoDownloader:
     def visitTopic(self, topicElement):
         self._childrenString = "children"
         self._idString = "id"
-        print "Visiting " + topicElement[self._idString]
+
+        childCounter = 0
         for child in topicElement[self._childrenString]:
             childId = child[self._idString]
             childKind = child[self._kindString]
+
             if childKind == self._topicString:
-                print "Ready to visit topic " + childId
                 url =  self._topicUrl + childId
             elif childKind == self._videoString:
-                print "Ready to visit video " + childId
                 url = self._videoUrl + childId
+
+            childCounter += 1
+            self._filePath.append(str(childCounter) + "_" + child[self._idString])
             self.visitElement(requests.get(url).json())
+            self._filePath.pop()
 
     def visitVideo(self, videoElement):
-        #TODO: write files following the hierarchy of topics.
-        title = videoElement["title"]
         downloadUrls = videoElement["download_urls"]
-        if "mp4" in downloadUrls:
-            fileRequest = requests.get(downloadUrls["mp4"], stream=True)
-            fileName = title.replace(" ", "_") + ".mp4"
+        if self._fileExtension in downloadUrls:
+            fileRequest = requests.get(downloadUrls[self._fileExtension], stream=True)
+            fileName = "/".join(self._filePath) + "." + self._fileExtension
             print "Downloading " + fileName
-            with open(fileName, 'wb') as fd:
-                for chunk in fileRequest.iter_content(16384):
-                    fd.write(chunk)
+            self.saveFile(fileRequest, fileName)
+
+    def saveFile(self, fileRequest, fileName):
+        if not os.path.exists(os.path.dirname(fileName)):
+            os.makedirs(os.path.dirname(fileName))
+
+        chunkSize = 2 ** 16
+        with open(fileName, 'wb') as fileDescriptor:
+            for chunk in fileRequest.iter_content(chunkSize):
+                fileDescriptor.write(chunk)
 
 def main():
-    #TODO: proper argument parsing.
     k = KhanAcademyVideoDownloader()
-    k.visitCourse(sys.argv[1])
+    k.visitCourse(k.parseCommandLineArguments())
 
 if __name__ == '__main__':
     main()
